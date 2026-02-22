@@ -358,9 +358,11 @@ const collectSelectedLocalFiles = async (
 
 const revealArchive = async (shell, platform, zipPath) => {
   if (platform === "win") {
+    const safePath = String(zipPath).replace(/'/g, "''");
+    const script = `Start-Process explorer.exe -ArgumentList '/select,"${safePath}"'`;
     return runShell(shell, {
-      command: "explorer.exe",
-      args: [`/select,${zipPath}`],
+      command: "powershell.exe",
+      args: ["-NoProfile", "-Command", script],
     });
   }
   if (platform === "mac") {
