@@ -203,7 +203,8 @@ export const ui = ({ context }) => {
               type="checkbox"
               checked={selectedSources[source.key]}
               onChange={() => handleSourceToggle(source.key)}
-              className="h-4 w-4 accent-primary"
+              className="h-4 w-4"
+              style={{ accentColor: "var(--color-primary)" }}
             />
             <span>{t(source.labelKey)}</span>
           </label>
