@@ -44,6 +44,24 @@ const getPathDirname = (value) => {
   return normalized.slice(0, index);
 };
 
+const getPathBasename = (value) => {
+  const normalized = normalizePath(value);
+  const parts = normalized.split("/");
+  const name = parts[parts.length - 1];
+  return name || "";
+};
+
+const sanitizeFileName = (value) => {
+  const safe = String(value || "").replace(/[\\/]/g, "_").trim();
+  return safe || "file.bin";
+};
+
+const joinPlatformPath = (base, child, platform) => {
+  const root = trimTrailingSeparators(base);
+  if (platform === "win") return `${root}\\${child}`;
+  return `${root}/${child}`;
+};
+
 const buildPackagePaths = (storageDir, canvasName, platform) => {
   const safeCanvasName = sanitizeCanvasNameForPath(canvasName);
   const timestamp = formatTimestamp();
@@ -53,11 +71,17 @@ const buildPackagePaths = (storageDir, canvasName, platform) => {
     const canvasDir = `${base}\\canvases\\${safeCanvasName}`;
     const assetsDir = `${canvasDir}\\assets`;
     const outputDir = `${base}\\exports\\canvas-assets`;
+    const tempRootDir = `${outputDir}\\.tmp`;
+    const stagingDir = `${tempRootDir}\\${safeCanvasName}_${timestamp}`;
+    const stagingAssetsDir = `${stagingDir}\\assets`;
     const zipPath = `${outputDir}\\${safeCanvasName}_assets_${timestamp}.zip`;
     return {
       canvasDir,
       assetsDir,
       outputDir,
+      tempRootDir,
+      stagingDir,
+      stagingAssetsDir,
       zipPath,
     };
   }
@@ -66,11 +90,17 @@ const buildPackagePaths = (storageDir, canvasName, platform) => {
   const canvasDir = `${base}/canvases/${safeCanvasName}`;
   const assetsDir = `${canvasDir}/assets`;
   const outputDir = `${base}/exports/canvas-assets`;
+  const tempRootDir = `${outputDir}/.tmp`;
+  const stagingDir = `${tempRootDir}/${safeCanvasName}_${timestamp}`;
+  const stagingAssetsDir = `${stagingDir}/assets`;
   const zipPath = `${outputDir}/${safeCanvasName}_assets_${timestamp}.zip`;
   return {
     canvasDir,
     assetsDir,
     outputDir,
+    tempRootDir,
+    stagingDir,
+    stagingAssetsDir,
     zipPath,
   };
 };
@@ -81,9 +111,9 @@ const runShell = async (shell, payload) =>
     ...payload,
   });
 
-const ensureOutputDir = async (shell, platform, outputDir) => {
+const ensureDir = async (shell, platform, dirPath) => {
   if (platform === "win") {
-    const dir = escapePowerShellSingleQuoted(outputDir);
+    const dir = escapePowerShellSingleQuoted(dirPath);
     const script = [
       "$ErrorActionPreference='Stop'",
       `$dir='${dir}'`,
@@ -99,11 +129,97 @@ const ensureOutputDir = async (shell, platform, outputDir) => {
 
   return runShell(shell, {
     command: "mkdir",
-    args: ["-p", outputDir],
+    args: ["-p", dirPath],
   });
 };
 
-const createZipOnUnix = async (shell, canvasDir, assetsDir, zipPath) => {
+const removeFile = async (shell, platform, filePath) => {
+  if (platform === "win") {
+    const safePath = escapePowerShellSingleQuoted(filePath);
+    const script = [
+      "$ErrorActionPreference='Stop'",
+      `$file='${safePath}'`,
+      "if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }",
+    ].join("; ");
+    return runShell(shell, {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-Command", script],
+    });
+  }
+
+  return runShell(shell, {
+    command: "rm",
+    args: ["-f", filePath],
+  });
+};
+
+const removeDir = async (shell, platform, dirPath) => {
+  if (platform === "win") {
+    const safePath = escapePowerShellSingleQuoted(dirPath);
+    const script = [
+      "$ErrorActionPreference='Stop'",
+      `$dir='${safePath}'`,
+      "if (Test-Path -LiteralPath $dir -PathType Container) {",
+      "  Remove-Item -LiteralPath $dir -Recurse -Force",
+      "}",
+    ].join("; ");
+    return runShell(shell, {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-Command", script],
+    });
+  }
+
+  return runShell(shell, {
+    command: "rm",
+    args: ["-rf", dirPath],
+  });
+};
+
+const isFileExists = async (shell, platform, filePath) => {
+  if (platform === "win") {
+    const safePath = escapePowerShellSingleQuoted(filePath);
+    const script = [
+      `$file='${safePath}'`,
+      "if (Test-Path -LiteralPath $file -PathType Leaf) { exit 0 }",
+      "exit 1",
+    ].join("; ");
+    const result = await runShell(shell, {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-Command", script],
+    });
+    return result.success;
+  }
+
+  const result = await runShell(shell, {
+    command: "test",
+    args: ["-f", filePath],
+  });
+  return result.success;
+};
+
+const copyFile = async (shell, platform, sourcePath, targetPath) => {
+  if (platform === "win") {
+    const safeSource = escapePowerShellSingleQuoted(sourcePath);
+    const safeTarget = escapePowerShellSingleQuoted(targetPath);
+    const script = [
+      "$ErrorActionPreference='Stop'",
+      `$source='${safeSource}'`,
+      `$target='${safeTarget}'`,
+      "Copy-Item -LiteralPath $source -Destination $target -Force",
+    ].join("; ");
+    return runShell(shell, {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-Command", script],
+    });
+  }
+
+  return runShell(shell, {
+    command: "cp",
+    args: [sourcePath, targetPath],
+  });
+};
+
+const createZipOnUnix = async (shell, canvasDir, assetsDir, zipPath, platform) => {
   const hasAssetsDir = await runShell(shell, {
     command: "test",
     args: ["-d", assetsDir],
@@ -127,10 +243,7 @@ const createZipOnUnix = async (shell, canvasDir, assetsDir, zipPath) => {
     return { success: false, reason: "emptyAssets" };
   }
 
-  const removeExisting = await runShell(shell, {
-    command: "rm",
-    args: ["-f", zipPath],
-  });
+  const removeExisting = await removeFile(shell, platform, zipPath);
   if (!removeExisting.success) {
     return {
       success: false,
@@ -191,11 +304,65 @@ const createZipOnWindows = async (shell, assetsDir, zipPath) => {
   };
 };
 
+const getSelectedImageItems = (canvasItems) =>
+  Array.isArray(canvasItems)
+    ? canvasItems.filter((item) => item && item.type === "image" && item.isSelected)
+    : [];
+
+const collectSelectedLocalFiles = async (
+  context,
+  selectedItems,
+  canvasName,
+  platform,
+) => {
+  const { actions, shell } = context;
+  const files = [];
+  const pathSet = new Set();
+  let skippedCount = 0;
+
+  for (const item of selectedItems) {
+    const rawPath = String(item.imagePath || "").trim();
+    if (!rawPath) {
+      skippedCount += 1;
+      continue;
+    }
+    if (actions.canvasActions.isRemoteImagePath(rawPath)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const resolved = await actions.canvasActions.resolveLocalImagePath(rawPath, canvasName);
+    const normalized = platform === "win" ? toWindowsPath(resolved) : normalizePath(resolved);
+    if (!isNonEmptyString(normalized)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const key = platform === "win" ? normalized.toLowerCase() : normalized;
+    if (pathSet.has(key)) {
+      continue;
+    }
+
+    const exists = await isFileExists(shell, platform, normalized);
+    if (!exists) {
+      skippedCount += 1;
+      continue;
+    }
+
+    pathSet.add(key);
+    files.push(normalized);
+  }
+
+  return { files, skippedCount };
+};
+
 const revealArchive = async (shell, platform, zipPath) => {
   if (platform === "win") {
+    const safePath = String(zipPath).replace(/'/g, "''");
+    const script = `Start-Process explorer.exe -ArgumentList '/select,"${safePath}"'`;
     return runShell(shell, {
-      command: "explorer.exe",
-      args: [`/select,${zipPath}`],
+      command: "powershell.exe",
+      args: ["-NoProfile", "-Command", script],
     });
   }
   if (platform === "mac") {
@@ -233,28 +400,9 @@ const pushFailedToast = (actions, error) => {
   );
 };
 
-const runPackage = async (context, canvasName) => {
+const packageAllAssets = async (context, platform, paths) => {
   const { actions, shell } = context;
-  const storageDir = await window.electron?.getStorageDir?.();
-  if (!isNonEmptyString(storageDir)) {
-    actions.globalActions.pushToast(
-      { key: "toast.command.packageAssets.noStorageDir" },
-      "error",
-    );
-    return;
-  }
-
-  const platform = detectPlatform();
-  if (platform !== "win" && platform !== "mac" && platform !== "linux") {
-    actions.globalActions.pushToast(
-      { key: "toast.command.packageAssets.unsupported" },
-      "warning",
-    );
-    return;
-  }
-
-  const paths = buildPackagePaths(storageDir, canvasName, platform);
-  const prepareResult = await ensureOutputDir(shell, platform, paths.outputDir);
+  const prepareResult = await ensureDir(shell, platform, paths.outputDir);
   if (!prepareResult.success) {
     pushFailedToast(
       actions,
@@ -266,7 +414,7 @@ const runPackage = async (context, canvasName) => {
   const archiveResult =
     platform === "win"
       ? await createZipOnWindows(shell, paths.assetsDir, paths.zipPath)
-      : await createZipOnUnix(shell, paths.canvasDir, paths.assetsDir, paths.zipPath);
+      : await createZipOnUnix(shell, paths.canvasDir, paths.assetsDir, paths.zipPath, platform);
 
   if (!archiveResult.success) {
     if (archiveResult.reason === "missingAssets") {
@@ -287,26 +435,155 @@ const runPackage = async (context, canvasName) => {
     return;
   }
 
+  const revealResult = await revealArchive(shell, platform, paths.zipPath);
   actions.globalActions.pushToast(
     {
-      key: "toast.command.packageAssets.success",
+      key: revealResult.success
+        ? "toast.command.packageAssets.success"
+        : "toast.command.packageAssets.successRevealFailed",
       params: { path: paths.zipPath },
     },
-    "success",
+    revealResult.success ? "success" : "warning",
+  );
+};
+
+const packageSelectedAssets = async (context, platform, paths, canvasName, selectedItems) => {
+  const { actions, shell } = context;
+  const selected = await collectSelectedLocalFiles(
+    context,
+    selectedItems,
+    canvasName,
+    platform,
   );
 
-  const revealResult = await revealArchive(shell, platform, paths.zipPath);
-  if (!revealResult.success) {
+  if (selected.files.length === 0) {
+    actions.globalActions.pushToast(
+      { key: "toast.command.packageAssets.selectedNoPackable" },
+      "warning",
+    );
+    return;
+  }
+
+  const prepareOutput = await ensureDir(shell, platform, paths.outputDir);
+  if (!prepareOutput.success) {
+    pushFailedToast(
+      actions,
+      prepareOutput.error || prepareOutput.stderr || "Failed to prepare output dir",
+    );
+    return;
+  }
+
+  const prepareTempRoot = await ensureDir(shell, platform, paths.tempRootDir);
+  if (!prepareTempRoot.success) {
+    pushFailedToast(
+      actions,
+      prepareTempRoot.error || prepareTempRoot.stderr || "Failed to prepare temp root dir",
+    );
+    return;
+  }
+
+  const prepareStaging = await ensureDir(shell, platform, paths.stagingAssetsDir);
+  if (!prepareStaging.success) {
+    pushFailedToast(
+      actions,
+      prepareStaging.error || prepareStaging.stderr || "Failed to prepare staging dir",
+    );
+    return;
+  }
+
+  let copiedCount = 0;
+  try {
+    for (let index = 0; index < selected.files.length; index += 1) {
+      const sourcePath = selected.files[index];
+      const sourceFileName = sanitizeFileName(getPathBasename(sourcePath));
+      const archiveFileName = `${String(index + 1).padStart(3, "0")}_${sourceFileName}`;
+      const targetPath = joinPlatformPath(paths.stagingAssetsDir, archiveFileName, platform);
+      const copyResult = await copyFile(shell, platform, sourcePath, targetPath);
+      if (copyResult.success) {
+        copiedCount += 1;
+      }
+    }
+
+    if (copiedCount === 0) {
+      actions.globalActions.pushToast(
+        { key: "toast.command.packageAssets.selectedNoPackable" },
+        "warning",
+      );
+      return;
+    }
+
+    const archiveResult =
+      platform === "win"
+        ? await createZipOnWindows(shell, paths.stagingAssetsDir, paths.zipPath)
+        : await createZipOnUnix(
+            shell,
+            paths.stagingDir,
+            paths.stagingAssetsDir,
+            paths.zipPath,
+            platform,
+          );
+
+    if (!archiveResult.success) {
+      pushFailedToast(actions, archiveResult.error);
+      return;
+    }
+
+    const skippedCount = selected.skippedCount + (selected.files.length - copiedCount);
+    const revealResult = await revealArchive(shell, platform, paths.zipPath);
+    const hasSkipped = skippedCount > 0;
+    const successKey = revealResult.success
+      ? hasSkipped
+        ? "toast.command.packageAssets.successSelectedWithSkipped"
+        : "toast.command.packageAssets.successSelected"
+      : hasSkipped
+        ? "toast.command.packageAssets.successSelectedWithSkippedRevealFailed"
+        : "toast.command.packageAssets.successSelectedRevealFailed";
     actions.globalActions.pushToast(
       {
-        key: "toast.command.packageAssets.revealFailed",
+        key: successKey,
         params: {
+          count: copiedCount,
+          skipped: skippedCount,
           path: paths.zipPath,
         },
       },
+      revealResult.success && !hasSkipped ? "success" : "warning",
+    );
+  } finally {
+    await removeDir(shell, platform, paths.stagingDir);
+  }
+};
+
+const runPackage = async (context, canvasState) => {
+  const { actions } = context;
+  const storageDir = await window.electron?.getStorageDir?.();
+  if (!isNonEmptyString(storageDir)) {
+    actions.globalActions.pushToast(
+      { key: "toast.command.packageAssets.noStorageDir" },
+      "error",
+    );
+    return;
+  }
+
+  const platform = detectPlatform();
+  if (platform !== "win" && platform !== "mac" && platform !== "linux") {
+    actions.globalActions.pushToast(
+      { key: "toast.command.packageAssets.unsupported" },
       "warning",
     );
+    return;
   }
+
+  const canvasName = canvasState.currentCanvasName;
+  const selectedItems = getSelectedImageItems(canvasState.canvasItems);
+  const paths = buildPackagePaths(storageDir, canvasName, platform);
+
+  if (selectedItems.length > 0) {
+    await packageSelectedAssets(context, platform, paths, canvasName, selectedItems);
+    return;
+  }
+
+  await packageAllAssets(context, platform, paths);
 };
 
 let lastCommandRunAt = 0;
@@ -325,8 +602,22 @@ export const config = {
         "Assets directory does not exist for current canvas",
       "toast.command.packageAssets.emptyAssets":
         "Assets directory is empty, nothing to package",
+      "toast.command.packageAssets.selectedNoPackable":
+        "No packable local files in selected images",
       "toast.command.packageAssets.failed": "Packaging failed: {{error}}",
       "toast.command.packageAssets.success": "Assets packaged: {{path}}",
+      "toast.command.packageAssets.successRevealFailed":
+        "Assets packaged, but failed to reveal file: {{path}}",
+      "toast.command.packageAssets.successSelected":
+        "Packaged {{count}} selected images: {{path}}",
+      "toast.command.packageAssets.successSelectedWithSkipped":
+        "Packaged {{count}} selected images (skipped {{skipped}}): {{path}}",
+      "toast.command.packageAssets.successSelectedRevealFailed":
+        "Packaged {{count}} selected images, but failed to reveal file: {{path}}",
+      "toast.command.packageAssets.successSelectedWithSkippedRevealFailed":
+        "Packaged {{count}} selected images (skipped {{skipped}}), but failed to reveal file: {{path}}",
+      "toast.command.packageAssets.selectedSkipped":
+        "Skipped {{count}} selected images that are not local files",
       "toast.command.packageAssets.revealFailed":
         "Packaged, but failed to reveal file. Path: {{path}}",
     },
@@ -339,8 +630,22 @@ export const config = {
       "toast.command.packageAssets.unsupported": "当前平台暂不支持该命令",
       "toast.command.packageAssets.missingAssets": "当前画布不存在 assets 素材目录",
       "toast.command.packageAssets.emptyAssets": "assets 素材目录为空，无需打包",
+      "toast.command.packageAssets.selectedNoPackable":
+        "当前选中图片没有可打包的本地文件",
       "toast.command.packageAssets.failed": "素材打包失败：{{error}}",
       "toast.command.packageAssets.success": "素材打包成功：{{path}}",
+      "toast.command.packageAssets.successRevealFailed":
+        "素材打包成功，但无法定位文件：{{path}}",
+      "toast.command.packageAssets.successSelected":
+        "已打包 {{count}} 张选中图片：{{path}}",
+      "toast.command.packageAssets.successSelectedWithSkipped":
+        "已打包 {{count}} 张选中图片（跳过 {{skipped}} 张）：{{path}}",
+      "toast.command.packageAssets.successSelectedRevealFailed":
+        "已打包 {{count}} 张选中图片，但无法定位文件：{{path}}",
+      "toast.command.packageAssets.successSelectedWithSkippedRevealFailed":
+        "已打包 {{count}} 张选中图片（跳过 {{skipped}} 张），但无法定位文件：{{path}}",
+      "toast.command.packageAssets.selectedSkipped":
+        "已跳过 {{count}} 张非本地选中图片",
       "toast.command.packageAssets.revealFailed":
         "已完成打包，但无法定位文件。路径：{{path}}",
     },
@@ -379,7 +684,7 @@ export const ui = ({ context }) => {
             actions,
             shell,
           },
-          canvasSnap.currentCanvasName,
+          canvasSnap,
         );
       } finally {
         actions.commandActions.close();
@@ -387,7 +692,7 @@ export const ui = ({ context }) => {
     };
 
     void start();
-  }, [actions, canvasSnap.currentCanvasName, shell]);
+  }, [actions, canvasSnap, shell]);
 
   return (
     <div className="px-4 py-6 text-sm text-neutral-300">

@@ -44,9 +44,14 @@ const buildRevealCommand = (filePath, platform) => {
     };
   }
   if (platform === "win") {
+    const safePath = String(filePath.replace(/\//g, "\\")).replace(/'/g, "''");
     return {
-      command: "explorer.exe",
-      args: [`/select,${filePath.replace(/\//g, "\\")}`],
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-Command",
+        `Start-Process explorer.exe -ArgumentList '/select,"${safePath}"'`,
+      ],
     };
   }
   if (platform === "linux") {
