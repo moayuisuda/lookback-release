@@ -92,6 +92,96 @@ const buildSearchTargets = (keyword, selectedSources) => {
 const hasAnySourceSelected = (selectedSources) =>
   Object.values(selectedSources).some(Boolean);
 
+const COMMAND_STYLE_ID = "multi-search-command-style";
+const COMMAND_STYLE_TEXT = `
+.multi-search-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.multi-search-label {
+  display: block;
+  font-size: 14px;
+  color: var(--color-neutral-300);
+}
+
+.multi-search-input {
+  width: 100%;
+  border: 1px solid var(--color-neutral-700);
+  border-radius: 6px;
+  background: var(--color-neutral-900);
+  color: var(--color-neutral-100);
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 20px;
+  outline: none;
+}
+
+.multi-search-input:focus {
+  border-color: var(--color-neutral-500);
+}
+
+.multi-search-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.multi-search-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-neutral-200);
+  font-size: 14px;
+}
+
+.multi-search-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+
+.multi-search-tip {
+  color: var(--color-neutral-500);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.multi-search-submit {
+  width: 100%;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-primary);
+  color: var(--color-white);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  padding: 8px 12px;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+  cursor: pointer;
+}
+
+.multi-search-submit:hover {
+  filter: brightness(0.92);
+}
+
+.multi-search-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  filter: none;
+}
+`;
+
+const ensureCommandStyle = () => {
+  if (document.getElementById(COMMAND_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = COMMAND_STYLE_ID;
+  style.textContent = COMMAND_STYLE_TEXT;
+  document.head.appendChild(style);
+};
+
 export const ui = ({ context }) => {
   const { React, hooks, actions } = context;
   const { useEffect, useRef, useState } = React;
@@ -101,6 +191,11 @@ export const ui = ({ context }) => {
   const [keyword, setKeyword] = useState("");
   const [selectedSources, setSelectedSources] = useState(loadSelectedSources);
   const inputRef = useRef(null);
+
+  useEffect(() => {
+    // 外部命令在运行时动态加载，样式需要在命令内自注入，避免打包时 Tailwind 漏扫。
+    ensureCommandStyle();
+  }, []);
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -175,10 +270,10 @@ export const ui = ({ context }) => {
 
   return (
     <form
-      className="px-4 py-4 space-y-3"
+      className="multi-search-form"
       onSubmit={handleSubmit}
     >
-      <label className="block text-sm text-neutral-300">
+      <label className="multi-search-label">
         {t("command.multiSearch.input.label")}
       </label>
       <input
@@ -187,36 +282,35 @@ export const ui = ({ context }) => {
         value={keyword}
         onChange={(event) => setKeyword(event.target.value)}
         placeholder={t("command.multiSearch.input.placeholder")}
-        className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-neutral-500"
+        className="multi-search-input"
       />
 
-      <div className="space-y-2">
-        <div className="text-sm text-neutral-300">
+      <div className="multi-search-sources">
+        <div className="multi-search-label">
           {t("command.multiSearch.source.label")}
         </div>
         {SEARCH_SOURCES.map((source) => (
           <label
             key={source.key}
-            className="flex items-center gap-2 text-sm text-neutral-200"
+            className="multi-search-item"
           >
             <input
               type="checkbox"
               checked={selectedSources[source.key]}
               onChange={() => handleSourceToggle(source.key)}
-              className="h-4 w-4"
-              style={{ accentColor: "var(--color-primary)" }}
+              className="multi-search-checkbox"
             />
             <span>{t(source.labelKey)}</span>
           </label>
         ))}
       </div>
 
-      <div className="text-xs text-neutral-500">
+      <div className="multi-search-tip">
         {t("command.multiSearch.tip")}
       </div>
       <button
         type="submit"
-        className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="multi-search-submit"
         disabled={submitDisabled}
       >
         {t("command.multiSearch.submit")}
