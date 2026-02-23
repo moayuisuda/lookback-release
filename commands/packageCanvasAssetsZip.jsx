@@ -592,7 +592,7 @@ export const config = {
   id: "packageCanvasAssetsZip",
   i18n: {
     en: {
-      "command.packageCanvasAssetsZip.title": "Package Canvas Assets",
+      "command.packageCanvasAssetsZip.title": "Package Canvas Assets to Zip",
       "command.packageCanvasAssetsZip.description":
         "Compress current canvas assets into a zip file",
       "command.packageCanvasAssetsZip.running": "Packaging assets...",
@@ -622,7 +622,7 @@ export const config = {
         "Packaged, but failed to reveal file. Path: {{path}}",
     },
     zh: {
-      "command.packageCanvasAssetsZip.title": "打包当前画布素材",
+      "command.packageCanvasAssetsZip.title": "打包图片为压缩包",
       "command.packageCanvasAssetsZip.description":
         "将当前画布素材压缩为 zip 文件",
       "command.packageCanvasAssetsZip.running": "素材打包中...",

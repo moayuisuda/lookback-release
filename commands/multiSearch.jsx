@@ -17,6 +17,11 @@ const SEARCH_SOURCES = [
     labelKey: "command.multiSearch.source.pixiv",
     buildUrl: (query) => `https://www.pixiv.net/tags/${query}/artworks`,
   },
+  {
+    key: "x",
+    labelKey: "command.multiSearch.source.x",
+    buildUrl: (query) => `https://x.com/search?q=${query}&src=typed_query`,
+  },
 ];
 
 const SOURCE_STORAGE_KEY = "command.multiSearch.selectedSources";
@@ -24,6 +29,7 @@ const DEFAULT_SELECTED_SOURCES = {
   pinterest: true,
   huaban: true,
   pixiv: true,
+  x: true,
 };
 
 const loadSelectedSources = () => {
@@ -35,6 +41,7 @@ const loadSelectedSources = () => {
       pinterest: parsed.pinterest === true,
       huaban: parsed.huaban === true,
       pixiv: parsed.pixiv === true,
+      x: parsed.x === true,
     };
   } catch {
     return DEFAULT_SELECTED_SOURCES;
@@ -53,6 +60,7 @@ export const config = {
       "command.multiSearch.source.pinterest": "Pinterest",
       "command.multiSearch.source.huaban": "Huaban",
       "command.multiSearch.source.pixiv": "Pixiv",
+      "command.multiSearch.source.x": "X",
       "command.multiSearch.submit": "Search",
       "command.multiSearch.tip": "Only checked websites will be opened",
       "toast.command.multiSearch.empty": "Please enter a keyword",
@@ -61,7 +69,7 @@ export const config = {
       "toast.command.multiSearch.opened": "Opened {{count}} websites for \"{{keyword}}\"",
     },
     zh: {
-      "command.multiSearch.title": "多路搜索",
+      "command.multiSearch.title": "多站点搜图",
       "command.multiSearch.description": "输入关键词后按勾选站点分别搜索",
       "command.multiSearch.input.label": "搜索词",
       "command.multiSearch.input.placeholder": "请输入搜索词",
@@ -69,6 +77,7 @@ export const config = {
       "command.multiSearch.source.pinterest": "Pinterest",
       "command.multiSearch.source.huaban": "花瓣",
       "command.multiSearch.source.pixiv": "Pixiv",
+      "command.multiSearch.source.x": "X",
       "command.multiSearch.submit": "搜索",
       "command.multiSearch.tip": "仅会打开已勾选的站点",
       "toast.command.multiSearch.empty": "请输入搜索词",
@@ -81,7 +90,7 @@ export const config = {
   title: "Multi Search",
   descriptionKey: "command.multiSearch.description",
   description: "Search keyword across multiple websites",
-  keywords: ["search", "multi", "pinterest", "huaban", "pixiv", "多路", "花瓣", "搜索"],
+  keywords: ["search", "multi", "pinterest", "huaban", "pixiv", "x", "多站点", "花瓣", "搜索"],
 };
 
 const buildSearchTargets = (keyword, selectedSources) => {
